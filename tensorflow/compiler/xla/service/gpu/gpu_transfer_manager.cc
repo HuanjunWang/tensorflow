@@ -33,8 +33,6 @@ limitations under the License.
 #include "tensorflow/core/platform/logging.h"
 #include "tensorflow/core/platform/stream_executor_no_cuda.h"
 
-namespace se = ::perftools::gputools;
-
 namespace xla {
 
 // TODO(b/30467474) Once GPU infeed implementation settles, consider
@@ -46,43 +44,39 @@ GpuTransferManager::GpuTransferManager()
           /*pointer_size=*/llvm::DataLayout(gpu::GpuCompiler::kDataLayout)
               .getPointerSize(0 /* default address space */)) {}
 
-Status GpuTransferManager::TransferLiteralToInfeed(se::StreamExecutor* executor,
-                                                   const Literal& literal) {
+Status GpuTransferManager::TransferLiteralToInfeed(
+    se::StreamExecutor* executor, const LiteralSlice& literal) {
   const Shape& shape = literal.shape();
   VLOG(2) << "Transferring literal to infeed with shape: "
           << ShapeUtil::HumanString(shape);
 
   if (!ShapeUtil::IsTuple(shape)) {
     int64 size = GetByteSizeRequirement(shape);
-    return TransferBufferToInfeed(executor, size, literal.InternalData());
-  }
-
-  if (ShapeUtil::IsNestedTuple(shape)) {
-    return Unimplemented(
-        "Infeed with a nested tuple shape is not supported: %s",
-        ShapeUtil::HumanString(literal.shape()).c_str());
+    return TransferBufferToInfeed(executor, size, literal.untyped_data());
   }
 
   // For a tuple, we transfer each of its elements to the device and
   // enqueue the resulting destination device addresses with the
   // infeed manager.
   std::vector<gpu::InfeedBuffer*> buffers;
-  buffers.reserve(literal.tuple_literals_size());
   auto cleanup = tensorflow::gtl::MakeCleanup([buffers]() {
     for (gpu::InfeedBuffer* b : buffers) {
       b->Done();
     }
   });
 
-  for (const auto& tuple_element : literal.tuple_literals()) {
-    const Shape& tuple_element_shape = tuple_element.shape();
-    int64 tuple_element_size = GetByteSizeRequirement(tuple_element_shape);
-    TF_ASSIGN_OR_RETURN(
-        gpu::InfeedBuffer * buffer,
-        TransferBufferToInfeedInternal(executor, tuple_element_size,
-                                       tuple_element.InternalData()));
-    buffers.push_back(buffer);
-  }
+  TF_RETURN_IF_ERROR(ShapeUtil::ForEachSubshapeWithStatus(
+      shape, [&](const Shape& literal_subshape, const ShapeIndex& index) {
+        if (ShapeUtil::IsArray(literal_subshape)) {
+          int64 tuple_element_size = GetByteSizeRequirement(literal_subshape);
+          TF_ASSIGN_OR_RETURN(
+              gpu::InfeedBuffer * buffer,
+              TransferBufferToInfeedInternal(executor, tuple_element_size,
+                                             literal.untyped_data(index)));
+          buffers.push_back(buffer);
+        }
+        return Status::OK();
+      }));
 
   cleanup.release();
   return EnqueueBuffersToInfeed(executor, buffers);
@@ -152,8 +146,8 @@ static std::unique_ptr<xla::TransferManager> CreateGpuTransferManager() {
 }
 
 static bool InitModule() {
-  xla::TransferManager::RegisterTransferManager(se::cuda::kCudaPlatformId,
-                                                &CreateGpuTransferManager);
+  xla::TransferManager::RegisterTransferManager(
+      stream_executor::cuda::kCudaPlatformId, &CreateGpuTransferManager);
   return true;
 }
 static bool module_initialized = InitModule();

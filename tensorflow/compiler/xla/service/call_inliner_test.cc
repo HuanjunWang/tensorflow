@@ -135,7 +135,7 @@ TEST_F(CallInlinerTest, InlineWithoutRunningPass) {
       HloInstruction::CreateCall(pred, {}, false_computation));
   auto computation = module->AddEntryComputation(call_false_builder.Build());
 
-  TF_ASSERT_OK(CallInliner::Inline(call));
+  TF_ASSERT_OK(CallInliner::Inline(call).status());
   EXPECT_THAT(computation->root_instruction(), op::Constant());
   EXPECT_THAT(computation->root_instruction()->control_successors(),
               ElementsAre(op::Constant()));
@@ -148,14 +148,16 @@ TEST_F(CallInlinerTest, CallToOutfeedComputationIsInlined) {
   HloComputation::Builder outfeeder(TestName() + ".outfeeder");
   auto value = outfeeder.AddInstruction(
       HloInstruction::CreateConstant(Literal::CreateR0<float>(42.0)));
+  auto token = outfeeder.AddInstruction(HloInstruction::CreateAfterAll({}));
   outfeeder.AddInstruction(
-      HloInstruction::CreateOutfeed(f32, value, /*outfeed_config=*/""));
+      HloInstruction::CreateOutfeed(f32, value, token, /*outfeed_config=*/""));
 
   auto outfeed_computation = module->AddEmbeddedComputation(outfeeder.Build());
 
   HloComputation::Builder outer(TestName() + ".outer");
   outer.AddInstruction(HloInstruction::CreateCall(
-      ShapeUtil::MakeNil(), /*operands=*/{}, outfeed_computation));
+      outfeed_computation->root_instruction()->shape(), /*operands=*/{},
+      outfeed_computation));
 
   module->AddEntryComputation(outer.Build());
 

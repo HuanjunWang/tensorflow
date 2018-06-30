@@ -38,6 +38,7 @@ REGISTER_NO_GRADIENT_OP("NotEqual");
 REGISTER_NO_GRADIENT_OP("LogicalAnd");
 REGISTER_NO_GRADIENT_OP("LogicalOr");
 REGISTER_NO_GRADIENT_OP("LogicalNot");
+REGISTER_NO_GRADIENT_OP("Floor");
 
 // Conjugate helper function returns the conjugate of an Output if it
 // is complex valued.
@@ -762,24 +763,6 @@ Status LgammaGrad(const Scope& scope, const Operation& op,
   return grad_scope.status();
 }
 REGISTER_GRADIENT_OP("Lgamma", LgammaGrad);
-
-Status SelectGrad(const Scope& scope, const Operation& op,
-                  const std::vector<Output>& grad_inputs,
-                  std::vector<Output>* grad_outputs) {
-  auto comparator = op.input(0);
-  auto x = op.input(1);
-  auto zeros = ZerosLike(scope, x);
-  auto grad = grad_inputs[0];
-
-  auto gx_1 = Where3(scope, comparator, grad, zeros);
-  auto gx_2 = Where3(scope, comparator, zeros, grad);
-
-  grad_outputs->push_back(NoGradient());
-  grad_outputs->push_back(gx_1);
-  grad_outputs->push_back(gx_2);
-  return scope.status();
-}
-REGISTER_GRADIENT_OP("Select", SelectGrad);
 
 Status MinOrMaxGrad(const Scope& scope, const Operation& op,
                     const std::vector<Output>& grad_inputs,

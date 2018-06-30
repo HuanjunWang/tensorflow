@@ -42,7 +42,7 @@ limitations under the License.
 #include "tensorflow/core/kernels/cuda_solvers.h"
 #include "tensorflow/core/platform/cuda.h"
 
-using ::perftools::gputools::cuda::ScopedActivateExecutorContext;
+using stream_executor::cuda::ScopedActivateExecutorContext;
 #endif  // GOOGLE_CUDA
 
 namespace tensorflow {
@@ -131,7 +131,7 @@ class WhereCPUOp : public OpKernel {
     OP_REQUIRES(
         context, input.dtype() != DT_HALF,
         errors::Unimplemented("No WhereOp available for float16/half type on "
-                              "GPU; dying in CPU WhereOp to avoid silently "
+                              "CPU; dying in CPU WhereOp to avoid silently "
                               "creating costly copies from device."));
 
     const int input_dims = input.dims();
@@ -278,8 +278,7 @@ class WhereGPUOp : public AsyncOpKernel {
 
     auto num_true_t = num_true.scalar<Tindex>();
 
-    perftools::gputools::DeviceMemoryBase num_true_ptr(
-        static_cast<void*>(num_true_t.data()));
+    se::DeviceMemoryBase num_true_ptr(static_cast<void*>(num_true_t.data()));
     // Push kernel to stream to get number of true elements.
     const GPUDevice& d = context->eigen_device<GPUDevice>();
     Status s = functor::NumTrue<GPUDevice, T, Tindex>::Compute(

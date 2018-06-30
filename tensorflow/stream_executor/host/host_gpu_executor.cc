@@ -28,8 +28,7 @@ limitations under the License.
 
 bool FLAGS_stream_executor_cpu_real_clock_rate = false;
 
-namespace perftools {
-namespace gputools {
+namespace stream_executor {
 namespace host {
 
 HostStream *AsHostStream(Stream *stream) {
@@ -96,7 +95,7 @@ bool HostExecutor::MemcpyDeviceToDevice(Stream *stream,
   // the nature of the HostExecutor) memcpy  on the stream (HostStream)
   // associated with the HostExecutor.
   AsHostStream(stream)->EnqueueTask(
-      [src_mem, dst_mem, size]() { memcpy(src_mem, dst_mem, size); });
+      [src_mem, dst_mem, size]() { memcpy(dst_mem, src_mem, size); });
   return true;
 }
 
@@ -266,5 +265,4 @@ rng::RngSupport *HostExecutor::CreateRng() {
 }
 
 }  // namespace host
-}  // namespace gputools
-}  // namespace perftools
+}  // namespace stream_executor

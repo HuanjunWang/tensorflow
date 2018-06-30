@@ -16,7 +16,6 @@ limitations under the License.
 #include <string>
 #include <vector>
 
-#include "absl/strings/string_view.h"
 #include "tensorflow/contrib/lite/toco/graph_transformations/graph_transformations.h"
 #include "tensorflow/contrib/lite/toco/model.h"
 #include "tensorflow/contrib/lite/toco/tooling_util.h"
@@ -34,21 +33,6 @@ std::vector<std::unique_ptr<Operator>>::iterator FindOperator(
     }
   }
   return it;
-}
-
-bool GetStateArrayForBackEdge(const Model& model,
-                              const string& back_edge_source_array,
-                              string* state_array = nullptr) {
-  for (const auto& rnn_state : model.flags.rnn_states()) {
-    if (back_edge_source_array == rnn_state.back_edge_source_array()) {
-      // Found LSTM cell output
-      if (state_array) {
-        *state_array = rnn_state.state_array();
-      }
-      return true;
-    }
-  }
-  return false;
 }
 
 // Returns true if the given operator has exactly 1 input, and is connected to
@@ -202,23 +186,6 @@ bool MatchOperatorInputs(const Operator& op, const Model& model,
   return true;
 }
 
-absl::string_view FindLongestCommonPrefix(absl::string_view a,
-                                          absl::string_view b) {
-  if (a.empty() || b.empty()) return absl::string_view();
-
-  const char* pa = a.data();
-  const char* pb = b.data();
-  size_t count = 0;
-  const ssize_t limit = std::min(a.size(), b.size());
-  while (count < limit && *pa == *pb) {
-    ++pa;
-    ++pb;
-    ++count;
-  }
-
-  return absl::string_view(a.data(), count);
-}
-
 }  // namespace
 
 bool IdentifyLstmCell::Run(Model* model, std::size_t op_index) {
@@ -249,11 +216,6 @@ bool IdentifyLstmCell::Run(Model* model, std::size_t op_index) {
                            &state_combine_add)) {
     return false;
   }
-  string prev_state;
-  if (!GetStateArrayForBackEdge(*model, state_output_tanh->inputs[0],
-                                &prev_state)) {
-    return false;
-  }
 
   // State forget & remember addition
   Operator *state_forget_mul, *state_remember_mul;
@@ -262,9 +224,7 @@ bool IdentifyLstmCell::Run(Model* model, std::size_t op_index) {
                            &state_remember_mul)) {
     return false;
   }
-  if (state_forget_mul->inputs[0] != prev_state) {
-    return false;
-  }
+  const string prev_state = state_forget_mul->inputs[0];
 
   // State forget gate
   Operator* state_forget_sig;
@@ -284,26 +244,26 @@ bool IdentifyLstmCell::Run(Model* model, std::size_t op_index) {
 
   // State remember "information" activation function
   Operator* fc_output_split;
-  if (!MatchOperatorInputs(*state_info_tanh, *model,
-                           OperatorType::kTensorFlowSplit, &fc_output_split)) {
+  if (!MatchOperatorInputs(*state_info_tanh, *model, OperatorType::kSplit,
+                           &fc_output_split)) {
     return false;
   }
   // State remember gate activation function
   Operator* tmp;
-  if (!MatchOperatorInputs(*state_remember_sig, *model,
-                           OperatorType::kTensorFlowSplit, &tmp) ||
+  if (!MatchOperatorInputs(*state_remember_sig, *model, OperatorType::kSplit,
+                           &tmp) ||
       (tmp != fc_output_split)) {
     return false;
   }
   // State forget gate activation function
-  if (!MatchOperatorInputs(*state_forget_sig, *model,
-                           OperatorType::kTensorFlowSplit, &tmp) ||
+  if (!MatchOperatorInputs(*state_forget_sig, *model, OperatorType::kSplit,
+                           &tmp) ||
       (tmp != fc_output_split)) {
     return false;
   }
   // Fully connected output activation function
-  if (!MatchOperatorInputs(*fc_output_sig, *model,
-                           OperatorType::kTensorFlowSplit, &tmp) ||
+  if (!MatchOperatorInputs(*fc_output_sig, *model, OperatorType::kSplit,
+                           &tmp) ||
       (tmp != fc_output_split)) {
     return false;
   }
@@ -321,6 +281,12 @@ bool IdentifyLstmCell::Run(Model* model, std::size_t op_index) {
                            OperatorType::kConcatenation, &concat_inputs,
                            OperatorType::kNone, nullptr, OperatorType::kNone,
                            nullptr)) {
+    return false;
+  }
+
+  if (static_cast<FullyConnectedOperator*>(fully_connected)->weights_format !=
+      FullyConnectedWeightsFormat::kDefault) {
+    // Not yet implemented: experimental shuffled weights in fused LSTM cell.
     return false;
   }
 

@@ -37,31 +37,35 @@ bool ResolveBatchToSpaceNDAttributes::Run(Model* model, std::size_t op_index) {
   }
 
   CHECK_EQ(op->inputs.size(), 3);
-  if (!IsConstantParameterArray(*model, op->inputs[1]) or
+  if (!IsConstantParameterArray(*model, op->inputs[1]) ||
       !IsConstantParameterArray(*model, op->inputs[2]))
     return false;
 
-  // Handling block_shape.
-  const auto& block_shape_array = *model->arrays[op->inputs[1]];
-  if (!block_shape_array.has_shape()) return false;
-  const std::vector<int>& block_shape_dims = block_shape_array.shape().dims();
-  CHECK_EQ(block_shape_dims.size(), 1);
-  std::vector<int> block_shape_buffer =
-      block_shape_array.GetBuffer<ArrayDataType::kInt32>().data;
-  for (int i = 0; i < block_shape_dims[0]; ++i) {
-    op->block_shape.push_back(block_shape_buffer[i]);
-  }
-
-  // Handling crops.
-  const auto& crops_array = *model->arrays[op->inputs[2]];
+  // Handle crops
+  const auto& crops_array = model->GetArray(op->inputs[2]);
   if (!crops_array.has_shape()) return false;
   const std::vector<int>& crops_dims = crops_array.shape().dims();
-  CHECK_EQ(crops_dims.size(), 2);
-  std::vector<int> crops_buffer =
+  if (crops_dims.size() != 2) {
+    // Code only handles crops of 2 dimensions. Perhaps another transformation
+    // will delete this op.
+    return false;
+  }
+  const std::vector<int>& crops_buffer =
       crops_array.GetBuffer<ArrayDataType::kInt32>().data;
   for (int i = 0; i < crops_dims[0]; ++i) {
     op->before_crops.push_back(crops_buffer[i * 2]);
     op->after_crops.push_back(crops_buffer[i * 2 + 1]);
+  }
+
+  // Handle block_shape
+  const auto& block_shape_array = model->GetArray(op->inputs[1]);
+  if (!block_shape_array.has_shape()) return false;
+  const std::vector<int>& block_shape_dims = block_shape_array.shape().dims();
+  CHECK_EQ(block_shape_dims.size(), 1);
+  const std::vector<int>& block_shape_buffer =
+      block_shape_array.GetBuffer<ArrayDataType::kInt32>().data;
+  for (int i = 0; i < block_shape_dims[0]; ++i) {
+    op->block_shape.push_back(block_shape_buffer[i]);
   }
 
   return true;
